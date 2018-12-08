@@ -6,16 +6,16 @@ from pystog import StoG
 from pystog.utils import RealSpaceChoices, ReciprocalSpaceChoices
 from pystog.io import  get_cli_args, parse_cli_args
 
-def main(kwargs=None):
-    if not kwargs:
-        args = get_cli_args()
-        if args.json:
-            print("loading config from '%s'" % args.json)
-            with open(args.json, 'r') as f:
-                kwargs = json.load(f)
+def main(cli_args):
+    parser = create_parser()
+    args = parser.parse_args(cli_args)
+    if args.json:
+        print("loading config from '%s'" % args.json)
+        with open(args.json, 'r') as f:
+            kwargs = json.load(f)
 
-        else:
-            kwargs = parser_cli_args(args)
+    else:
+        kwargs = get_kwargs_from_cli_args(args)
 
     # Merge S(Q) files
     stog = StoG(**kwargs)
@@ -64,4 +64,4 @@ def main(kwargs=None):
             stog.plot_summary_gr()
 
 if __name__ == "__main__":
-    main()
+    main(sys.argv[1:])
