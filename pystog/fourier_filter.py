@@ -11,6 +11,8 @@ given range to exclude.
 
 from __future__ import (absolute_import, division, print_function)
 
+import numpy as np
+
 from pystog.converter import Converter
 from pystog.transformer import Transformer
 
@@ -39,7 +41,7 @@ class FourierFilter:
         self.transformer = Transformer()
 
     # g(r)
-    def g_using_F(self, r, gr, q, fq, cutoff, **kwargs):
+    def g_using_F(self, r, gr, q, fq, cutoff, dgr=None, dfq=None, **kwargs):
         """Fourier filters real space :math:`g(r)`
         using the reciprocal space :math:`Q[S(Q)-1]`
 
@@ -56,7 +58,7 @@ class FourierFilter:
 
         :return: A tuple of the :math:`Q` and :math:`Q[S(Q)-1]`
                  for the 0. to cutoff transform,
-                 the original :math:`Q` and :math:`Q[S(Q)-1]`,
+                 the corrected :math:`Q` and :math:`Q[S(Q)-1]`,
                  and the filtered :math:`r` and :math:`g(r)`.
 
                  Thus,
@@ -67,28 +69,29 @@ class FourierFilter:
         # setup qmin, qmax, and get low-r region to back transform
         qmin = min(q)
         qmax = max(q)
-        r_tmp, gr_tmp_initial = self.transformer.apply_cropping(
-            r, gr, 0.0, cutoff)
+        r_tmp, gr_tmp_initial, dgr_tmp_initial = self.transformer.apply_cropping(
+            r, gr, 0.0, cutoff, dy=dgr)
 
         # Shift low-r so it goes to 1 at "high-r" for this section. Reduces the
         # sinc function issue.
         gr_tmp = gr_tmp_initial + 1
 
         # Transform the shifted low-r region to F(Q) to get F(Q)_ft
-        q_ft = self.transformer._extend_axis_to_low_end(q)
-        q_ft, fq_ft = self.transformer.g_to_F(r_tmp, gr_tmp, q_ft, **kwargs)
-        q_ft, fq_ft = self.transformer.apply_cropping(q_ft, fq_ft, qmin, qmax)
+        q_ft, fq_ft, dfq_ft = self.transformer.g_to_F(r_tmp, gr_tmp, q, dgr=dgr_tmp_initial,
+                                                      **kwargs)
+        q_ft, fq_ft, dfq_ft = self.transformer.apply_cropping(q_ft, fq_ft, qmin, qmax, dy=dfq_ft)
 
         # Subtract F(Q)_ft from original F(Q) = delta_F(Q)
-        q, fq = self.transformer.apply_cropping(q, fq, qmin, qmax)
+        q, fq, dfq = self.transformer.apply_cropping(q, fq, qmin, qmax, dy=dfq)
         fq = (fq - fq_ft)
+        dfq = np.sqrt(dfq**2 + dfq_ft**2)
 
         # Transform delta_F(Q) for g(r) with low-r removed
-        r, gr = self.transformer.F_to_g(q, fq, r, **kwargs)
+        r, gr, dgr = self.transformer.F_to_g(q, fq, r, dfq=dfq, **kwargs)
 
-        return q_ft, fq_ft, q, fq, r, gr
+        return q_ft, fq_ft, q, fq, r, gr, dfq_ft, dfq, dgr
 
-    def g_using_S(self, r, gr, q, sq, cutoff, **kwargs):
+    def g_using_S(self, r, gr, q, sq, cutoff, dgr=None, dsq=None, **kwargs):
         """Fourier filters real space :math:`g(r)`
         using the reciprocal space :math:`S(Q)`
 
@@ -105,7 +108,7 @@ class FourierFilter:
 
         :return: A tuple of the :math:`Q` and :math:`S(Q)`
                  for the 0. to cutoff transform,
-                 the original :math:`Q` and :math:`S(Q)`,
+                 the corrected :math:`Q` and :math:`S(Q)`,
                  and the filtered :math:`r` and :math:`g(r)`.
 
                  Thus,
@@ -113,14 +116,14 @@ class FourierFilter:
                  :math:`Q`, :math:`S(Q)`, :math:`r_{FF}`, :math:`g(r)_{FF}]`
         :rtype: tuple of numpy.array
         """
-        fq = self.converter.S_to_F(q, sq)
-        q_ft, fq_ft, q, fq, r, gr = self.g_using_F(
-            r, gr, q, fq, cutoff, **kwargs)
-        sq_ft = self.converter.F_to_S(q_ft, fq_ft)
-        sq = self.converter.F_to_S(q, fq)
-        return q_ft, sq_ft, q, sq, r, gr
+        fq, dfq = self.converter.S_to_F(q, sq, dsq=dsq)
+        q_ft, fq_ft, q, fq, r, gr, dfq_ft, dfq, dgr = self.g_using_F(
+            r, gr, q, fq, cutoff, dgr=dgr, dfq=dfq, **kwargs)
+        sq_ft, dsq_ft = self.converter.F_to_S(q_ft, fq_ft, dfq=dfq_ft)
+        sq, dsq = self.converter.F_to_S(q, fq, dfq=dfq)
+        return q_ft, sq_ft, q, sq, r, gr, dsq_ft, dsq, dgr
 
-    def g_using_FK(self, r, gr, q, fq, cutoff, **kwargs):
+    def g_using_FK(self, r, gr, q, fq, cutoff, dgr=None, dfq=None, **kwargs):
         """Fourier filters real space :math:`g(r)`
         using the reciprocal space :math:`F(Q)`
 
@@ -137,7 +140,7 @@ class FourierFilter:
 
         :return: A tuple of the :math:`Q` and :math:`F(Q)`
                  for the 0. to cutoff transform,
-                 the original :math:`Q` and :math:`F(Q)`,
+                 the corrected :math:`Q` and :math:`F(Q)`,
                  and the filtered :math:`r` and :math:`g(r)`.
 
                  Thus,
@@ -145,14 +148,14 @@ class FourierFilter:
                  :math:`Q`, :math:`F(Q)`, :math:`r_{FF}`, :math:`g(r)_{FF}]`
         :rtype: tuple of numpy.array
         """
-        fq = self.converter.FK_to_F(q, fq, **kwargs)
-        q_ft, fq_ft, q, fq, r, gr = self.g_using_F(
-            r, gr, q, fq, cutoff, **kwargs)
-        fq_ft = self.converter.F_to_FK(q_ft, fq_ft, **kwargs)
-        fq = self.converter.F_to_FK(q, fq, **kwargs)
-        return q_ft, fq_ft, q, fq, r, gr
+        fq, dfq = self.converter.FK_to_F(q, fq, dfq=dfq, **kwargs)
+        q_ft, fq_ft, q, fq, r, gr, dfq_ft, dfq, dgr = self.g_using_F(
+            r, gr, q, fq, cutoff, dgr=dgr, dfq=dfq, **kwargs)
+        fq_ft, dfq_ft = self.converter.F_to_FK(q_ft, fq_ft, dfq=dfq_ft, **kwargs)
+        fq, dfq = self.converter.F_to_FK(q, fq, dfq=dfq, **kwargs)
+        return q_ft, fq_ft, q, fq, r, gr, dfq_ft, dfq, dgr
 
-    def g_using_DCS(self, r, gr, q, dcs, cutoff, **kwargs):
+    def g_using_DCS(self, r, gr, q, dcs, cutoff, dgr=None, ddcs=None, **kwargs):
         """Fourier filters real space :math:`g(r)`
         using the reciprocal space
         :math:`\\frac{d \\sigma}{d \\Omega}(Q)`
@@ -171,7 +174,7 @@ class FourierFilter:
         :return: A tuple of the :math:`Q` and
                  :math:`\\frac{d \\sigma}{d \\Omega}(Q)`
                  for the 0. to cutoff transform,
-                 the original :math:`Q` and
+                 the corrected :math:`Q` and
                  :math:`\\frac{d \\sigma}{d \\Omega}(Q)`,
                  and the filtered :math:`r` and :math:`g(r)`.
 
@@ -181,15 +184,15 @@ class FourierFilter:
                  :math:`r_{FF}`, :math:`g(r)_{FF}]`
         :rtype: tuple of numpy.array
         """
-        fq = self.converter.DCS_to_F(q, dcs, **kwargs)
-        q_ft, fq_ft, q, fq, r, gr = self.g_using_F(
-            r, gr, q, fq, cutoff, **kwargs)
-        dcs_ft = self.converter.F_to_DCS(q_ft, fq_ft, **kwargs)
-        dcs = self.converter.F_to_DCS(q_ft, fq, **kwargs)
-        return q_ft, dcs_ft, q, dcs, r, gr
+        fq, dfq = self.converter.DCS_to_F(q, dcs, ddcs=ddcs, **kwargs)
+        q_ft, fq_ft, q, fq, r, gr, dfq_ft, dfq, dgr = self.g_using_F(
+            r, gr, q, fq, cutoff, dgr=dgr, dfq=dfq, **kwargs)
+        dcs_ft, ddcs_ft = self.converter.F_to_DCS(q_ft, fq_ft, dfq=dfq_ft, **kwargs)
+        dcs, ddcs = self.converter.F_to_DCS(q_ft, fq, dfq=dfq, **kwargs)
+        return q_ft, dcs_ft, q, dcs, r, gr, ddcs_ft, ddcs, dgr
 
     # G(R) = PDF
-    def G_using_F(self, r, gr, q, fq, cutoff, **kwargs):
+    def G_using_F(self, r, gr, q, fq, cutoff, dgr=None, dfq=None, **kwargs):
         """Fourier filters real space :math:`G_{PDFFIT}(r)`
         using the reciprocal space :math:`Q[S(Q)-1]`
 
@@ -206,7 +209,7 @@ class FourierFilter:
 
         :return: A tuple of the :math:`Q` and :math:`Q[S(Q)-1]`
                  for the 0. to cutoff transform,
-                 the original :math:`Q` and :math:`Q[S(Q)-1]`,
+                 the corrected :math:`Q` and :math:`Q[S(Q)-1]`,
                  and the filtered :math:`r` and :math:`G_{PDFFIT}(r)`.
 
                  Thus,
@@ -214,13 +217,13 @@ class FourierFilter:
                  :math:`Q`, :math:`Q[S(Q)-1]`, :math:`r_{FF}`, :math:`G_{PDFFIT}(r)_{FF}]`
         :rtype: tuple of numpy.array
         """
-        gr = self.converter.G_to_g(r, gr, **kwargs)
-        q_ft, fq_ft, q, fq, r, gr = self.g_using_F(
-            r, gr, q, fq, cutoff, **kwargs)
-        gr = self.converter.g_to_G(r, gr, **kwargs)
-        return q_ft, fq_ft, q, fq, r, gr
+        gr, dgr = self.converter.G_to_g(r, gr, dgr=dgr, **kwargs)
+        q_ft, fq_ft, q, fq, r, gr, dfq_ft, dfq, dgr = self.g_using_F(
+            r, gr, q, fq, cutoff, dgr=dgr, dfq=dfq, **kwargs)
+        gr, dgr = self.converter.g_to_G(r, gr, dgr=dgr, **kwargs)
+        return q_ft, fq_ft, q, fq, r, gr, dfq_ft, dfq, dgr
 
-    def G_using_S(self, r, gr, q, sq, cutoff, **kwargs):
+    def G_using_S(self, r, gr, q, sq, cutoff, dgr=None, dsq=None, **kwargs):
         """Fourier filters real space :math:`G_{PDFFIT}(r)`
         using the reciprocal space :math:`S(Q)`
 
@@ -237,7 +240,7 @@ class FourierFilter:
 
         :return: A tuple of the :math:`Q` and :math:`S(Q)`
                  for the 0. to cutoff transform,
-                 the original :math:`Q` and :math:`S(Q)`,
+                 the corrected :math:`Q` and :math:`S(Q)`,
                  and the filtered :math:`r` and :math:`G_{PDFFIT}(r)`.
 
                  Thus,
@@ -245,14 +248,14 @@ class FourierFilter:
                  :math:`Q`, :math:`S(Q)`, :math:`r_{FF}`, :math:`G_{PDFFIT}(r)_{FF}]`
         :rtype: tuple of numpy.array
         """
-        fq = self.converter.S_to_F(q, sq)
-        q_ft, fq_ft, q, fq, r, gr = self.G_using_F(
-            r, gr, q, fq, cutoff, **kwargs)
-        sq_ft = self.converter.F_to_S(q_ft, fq_ft)
-        sq = self.converter.F_to_S(q, fq)
-        return q_ft, sq_ft, q, sq, r, gr
+        fq, dfq = self.converter.S_to_F(q, sq, dsq=dsq)
+        q_ft, fq_ft, q, fq, r, gr, dfq_ft, dfq, dgr = self.G_using_F(
+            r, gr, q, fq, cutoff, dgr=dgr, dfq=dfq, **kwargs)
+        sq_ft, dsq_ft = self.converter.F_to_S(q_ft, fq_ft, dfq_ft)
+        sq, dsq = self.converter.F_to_S(q, fq, dfq)
+        return q_ft, sq_ft, q, sq, r, gr, dsq_ft, dsq, dgr
 
-    def G_using_FK(self, r, gr, q, fq, cutoff, **kwargs):
+    def G_using_FK(self, r, gr, q, fq, cutoff, dgr=None, dfq=None, **kwargs):
         """Fourier filters real space :math:`G_{PDFFIT}(r)`
         using the reciprocal space :math:`F(Q)`
 
@@ -269,7 +272,7 @@ class FourierFilter:
 
         :return: A tuple of the :math:`Q` and :math:`F(Q)`
                  for the 0. to cutoff transform,
-                 the original :math:`Q` and :math:`F(Q)`,
+                 the corrected :math:`Q` and :math:`F(Q)`,
                  and the filtered :math:`r` and :math:`G_{PDFFIT}(r)`.
 
                  Thus,
@@ -277,14 +280,14 @@ class FourierFilter:
                  :math:`Q`, :math:`F(Q)`, :math:`r_{FF}`, :math:`G_{PDFFIT}(r)_{FF}]`
         :rtype: tuple of numpy.array
         """
-        fq = self.converter.FK_to_F(q, fq, **kwargs)
-        q_ft, fq_ft, q, fq, r, gr = self.G_using_F(
-            r, gr, q, fq, cutoff, **kwargs)
-        fq_ft = self.converter.F_to_FK(q_ft, fq_ft, **kwargs)
-        fq = self.converter.F_to_FK(q, fq, **kwargs)
-        return q_ft, fq_ft, q, fq, r, gr
+        fq, dfq = self.converter.FK_to_F(q, fq, dfq=dfq, **kwargs)
+        q_ft, fq_ft, q, fq, r, gr, dfq_ft, dfq, dgr = self.G_using_F(
+            r, gr, q, fq, cutoff, dgr=dgr, dfq=dfq, **kwargs)
+        fq_ft, dfq_ft = self.converter.F_to_FK(q_ft, fq_ft, dfq=dfq_ft, **kwargs)
+        fq, dfq = self.converter.F_to_FK(q, fq, dfq=dfq, **kwargs)
+        return q_ft, fq_ft, q, fq, r, gr, dfq_ft, dfq, dgr
 
-    def G_using_DCS(self, r, gr, q, dcs, cutoff, **kwargs):
+    def G_using_DCS(self, r, gr, q, dcs, cutoff, dgr=None, ddcs=None, **kwargs):
         """Fourier filters real space :math:`G_{PDFFIT}(r)`
         using the reciprocal space
         :math:`\\frac{d \\sigma}{d \\Omega}(Q)`
@@ -303,7 +306,7 @@ class FourierFilter:
         :return: A tuple of the :math:`Q` and
                  :math:`\\frac{d \\sigma}{d \\Omega}(Q)`
                  for the 0. to cutoff transform,
-                 the original :math:`Q` and
+                 the corrected :math:`Q` and
                  :math:`\\frac{d \\sigma}{d \\Omega}(Q)`,
                  and the filtered :math:`r` and :math:`G_{PDFFIT}(r)`.
 
@@ -313,15 +316,15 @@ class FourierFilter:
                  :math:`r_{FF}`, :math:`G_{PDFFIT}(r)_{FF}]`
         :rtype: tuple of numpy.array
         """
-        fq = self.converter.DCS_to_F(q, dcs, **kwargs)
-        q_ft, fq_ft, q, fq, r, gr = self.G_using_F(
-            r, gr, q, fq, cutoff, **kwargs)
-        dcs_ft = self.converter.F_to_DCS(q_ft, fq_ft, **kwargs)
-        dcs = self.converter.F_to_DCS(q, fq, **kwargs)
-        return q_ft, dcs_ft, q, dcs, r, gr
+        fq, dfq = self.converter.DCS_to_F(q, dcs, ddcs=ddcs, **kwargs)
+        q_ft, fq_ft, q, fq, r, gr, dfq_ft, dfq, dgr = self.G_using_F(
+            r, gr, q, fq, cutoff, dgr=dgr, dfq=dfq, **kwargs)
+        dcs_ft, ddcs_ft = self.converter.F_to_DCS(q_ft, fq_ft, dfq=dfq_ft, **kwargs)
+        dcs, ddcs = self.converter.F_to_DCS(q, fq, dfq=dfq, **kwargs)
+        return q_ft, dcs_ft, q, dcs, r, gr, ddcs_ft, ddcs, dgr
 
     # Keen's G(r)
-    def GK_using_F(self, r, gr, q, fq, cutoff, **kwargs):
+    def GK_using_F(self, r, gr, q, fq, cutoff, dgr=None, dfq=None, **kwargs):
         """Fourier filters real space :math:`G_{Keen Version}(r)`
         using the reciprocal space :math:`Q[S(Q)-1]`
 
@@ -338,7 +341,7 @@ class FourierFilter:
 
         :return: A tuple of the :math:`Q` and :math:`Q[S(Q)-1]`
                  for the 0. to cutoff transform,
-                 the original :math:`Q` and :math:`Q[S(Q)-1]`,
+                 the corrected :math:`Q` and :math:`Q[S(Q)-1]`,
                  and the filtered :math:`r` and :math:`G_{Keen Version}(r)`.
 
                  Thus,
@@ -347,13 +350,13 @@ class FourierFilter:
         :rtype: tuple of numpy.array
         """
 
-        gr = self.converter.GK_to_g(r, gr, **kwargs)
-        q_ft, fq_ft, q, fq, r, gr = self.g_using_F(
-            r, gr, q, fq, cutoff, **kwargs)
-        gr = self.converter.g_to_GK(r, gr, **kwargs)
-        return q_ft, fq_ft, q, fq, r, gr
+        gr, dgr = self.converter.GK_to_g(r, gr, dgr=dgr, **kwargs)
+        q_ft, fq_ft, q, fq, r, gr, dfq_ft, dfq, dgr = self.g_using_F(
+            r, gr, q, fq, cutoff, dgr=dgr, dfq=dfq, **kwargs)
+        gr, dgr = self.converter.g_to_GK(r, gr, dgr=dgr, **kwargs)
+        return q_ft, fq_ft, q, fq, r, gr, dfq_ft, dfq, dgr
 
-    def GK_using_S(self, r, gr, q, sq, cutoff, **kwargs):
+    def GK_using_S(self, r, gr, q, sq, cutoff, dgr=None, dsq=None, **kwargs):
         """Fourier filters real space :math:`G_{Keen Version}(r)`
         using the reciprocal space :math:`S(Q)`
 
@@ -370,7 +373,7 @@ class FourierFilter:
 
         :return: A tuple of the :math:`Q` and :math:`S(Q)`
                  for the 0. to cutoff transform,
-                 the original :math:`Q` and :math:`S(Q)`,
+                 the corrected :math:`Q` and :math:`S(Q)`,
                  and the filtered :math:`r` and :math:`G_{Keen Version}(r)`.
 
                  Thus,
@@ -379,14 +382,14 @@ class FourierFilter:
         :rtype: tuple of numpy.array
         """
 
-        fq = self.converter.S_to_F(q, sq)
-        q_ft, fq_ft, q, fq, r, gr = self.GK_using_F(
-            r, gr, q, fq, cutoff, **kwargs)
-        sq_ft = self.converter.F_to_S(q_ft, fq_ft)
-        sq = self.converter.F_to_S(q, fq)
-        return q_ft, sq_ft, q, sq, r, gr
+        fq, dfq = self.converter.S_to_F(q, sq, dsq=dsq)
+        q_ft, fq_ft, q, fq, r, gr, dfq_ft, dfq, dgr = self.GK_using_F(
+            r, gr, q, fq, cutoff, dgr=dgr, dfq=dfq, **kwargs)
+        sq_ft, dsq_ft = self.converter.F_to_S(q_ft, fq_ft, dfq=dfq_ft)
+        sq, dsq = self.converter.F_to_S(q, fq, dfq=dfq)
+        return q_ft, sq_ft, q, sq, r, gr, dsq_ft, dsq, dgr
 
-    def GK_using_FK(self, r, gr, q, fq, cutoff, **kwargs):
+    def GK_using_FK(self, r, gr, q, fq, cutoff, dgr=None, dfq=None, **kwargs):
         """Fourier filters real space :math:`G_{Keen Version}(r)`
         using the reciprocal space :math:`F(Q)`
 
@@ -403,7 +406,7 @@ class FourierFilter:
 
         :return: A tuple of the :math:`Q` and :math:`F(Q)`
                  for the 0. to cutoff transform,
-                 the original :math:`Q` and :math:`F(Q)`,
+                 the corrected :math:`Q` and :math:`F(Q)`,
                  and the filtered :math:`r` and :math:`G_{Keen Version}(r)`.
 
                  Thus,
@@ -412,14 +415,14 @@ class FourierFilter:
         :rtype: tuple of numpy.array
         """
 
-        fq = self.converter.FK_to_F(q, fq, **kwargs)
-        q_ft, fq_ft, q, fq, r, gr = self.GK_using_F(
-            r, gr, q, fq, cutoff, **kwargs)
-        fq_ft = self.converter.F_to_FK(q_ft, fq_ft, **kwargs)
-        fq = self.converter.F_to_FK(q, fq, **kwargs)
-        return q_ft, fq_ft, q, fq, r, gr
+        fq, dfq = self.converter.FK_to_F(q, fq, dfq=dfq, **kwargs)
+        q_ft, fq_ft, q, fq, r, gr, dfq_ft, dfq, dgr = self.GK_using_F(
+            r, gr, q, fq, cutoff, dgr=dgr, dfq=dfq, **kwargs)
+        fq_ft, dfq_ft = self.converter.F_to_FK(q_ft, fq_ft, dfq=dfq_ft, **kwargs)
+        fq, dfq = self.converter.F_to_FK(q, fq, dfq=dfq, **kwargs)
+        return q_ft, fq_ft, q, fq, r, gr, dfq_ft, dfq, dgr
 
-    def GK_using_DCS(self, r, gr, q, dcs, cutoff, **kwargs):
+    def GK_using_DCS(self, r, gr, q, dcs, cutoff, dgr=None, ddcs=None, **kwargs):
         """Fourier filters real space :math:`G_{Keen Version}(r)`
         using the reciprocal space
         :math:`\\frac{d \\sigma}{d \\Omega}(Q)`
@@ -438,7 +441,7 @@ class FourierFilter:
         :return: A tuple of the :math:`Q` and
                  :math:`\\frac{d \\sigma}{d \\Omega}(Q)`
                  for the 0. to cutoff transform,
-                 the original :math:`Q` and
+                 the corrected :math:`Q` and
                  :math:`\\frac{d \\sigma}{d \\Omega}(Q)`,
                  and the filtered :math:`r` and :math:`G_{Keen Version}(r)`.
 
@@ -448,9 +451,9 @@ class FourierFilter:
                  :math:`r_{FF}`, :math:`G_{Keen Version}(r)_{FF}]`
         :rtype: tuple of numpy.array
         """
-        fq = self.converter.DCS_to_F(q, dcs, **kwargs)
-        q_ft, fq_ft, q, fq, r, gr = self.GK_using_F(
-            r, gr, q, fq, cutoff, **kwargs)
-        dcs_ft = self.converter.F_to_DCS(q_ft, fq_ft, **kwargs)
-        dcs = self.converter.F_to_DCS(q, fq, **kwargs)
-        return q_ft, dcs_ft, q, dcs, r, gr
+        fq, dfq = self.converter.DCS_to_F(q, dcs, ddcs=ddcs, **kwargs)
+        q_ft, fq_ft, q, fq, r, gr, dfq_ft, dfq, dgr = self.GK_using_F(
+            r, gr, q, fq, cutoff, dgr=dgr, dfq=dfq, **kwargs)
+        dcs_ft, ddcs_ft = self.converter.F_to_DCS(q_ft, fq_ft, dfq=dfq_ft, **kwargs)
+        dcs, ddcs = self.converter.F_to_DCS(q, fq, dfq=dfq, **kwargs)
+        return q_ft, dcs_ft, q, dcs, r, gr, ddcs_ft, ddcs, dgr

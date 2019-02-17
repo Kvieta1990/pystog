@@ -34,7 +34,6 @@ def main(cli_args):
     if "PlotFlag" in kwargs:
         if kwargs["PlotFlag"]:
             stog.plot_gr(
-                stog.df_gr_master,
                 ylabel=stog.real_space_function,
                 title="Merged %s" %
                 stog.real_space_function)
@@ -43,8 +42,10 @@ def main(cli_args):
     # print stog.get_lowR_mean_square()
 
     # Set the S(Q) and g(r) if no Fourier Filter
+    r = stog.df_gr_master[stog.gr_title].values
+    q = stog.df_sq_master[stog.sq_title].values
     sq = stog.df_sq_master[stog.sq_title].values
-    gr_out = gofr
+    gr_out = stog.df_gr_master[stog.gr_title].values
 
     # Apply Fourier Filter
     if "FourierFilter" in kwargs:
@@ -55,8 +56,8 @@ def main(cli_args):
         r, gr_out = stog.apply_lorch(q, sq, r)
 
     # Apply final scale number
-    stog.add_keen_fq(q, sq)
-    stog.add_keen_gr(r, gr_out)
+    stog._add_keen_fq(q, sq)
+    stog._add_keen_gr(r, gr_out)
 
     if "PlotFlag" in kwargs:
         if kwargs["PlotFlag"]:
