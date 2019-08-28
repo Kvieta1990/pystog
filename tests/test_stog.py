@@ -93,7 +93,7 @@ class TestStogBase(unittest.TestCase):
                        'Scale': 1.0},
                  'X': {'Offset': 0.0}
                  },
-                {'Filename': get_data_path(self.material.reciprocal_space_filename),
+                {'Filename': get_data_path(filename),
                  'ReciprocalFunction': 'S(Q)',
                  'Qmin': 1.90,
                  'Qmax': 35.2,
